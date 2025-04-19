@@ -12,7 +12,7 @@ A lightweight Wake on LAN server that can be installed on Raspberry Pi or other 
 
 ## Requirements
 
-- Raspberry Pi or other Linux device
+- for Raspberry Pi Zero 2W/3/4/5 or other lightweight Linux devices
 - Node.js 12.x or higher
 - Internet connection for installation
 - The server must be on the same network as the devices you want to wake
