@@ -2,7 +2,6 @@
 
 # WOL Server Installer for Raspberry Pi
 echo "WOL Server Installer for Raspberry Pi"
-echo "====================================="
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
