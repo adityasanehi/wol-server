@@ -1,4 +1,4 @@
-# Wake on LAN Server for Raspberry Pi
+# Wake on LAN Server for Raspberry P
 
 A lightweight Wake on LAN server that can be installed on Raspberry Pi or other lightweight Linux devices.
 
