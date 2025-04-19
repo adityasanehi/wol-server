@@ -1,0 +1,22 @@
+{
+  "name": "wol-server",
+  "version": "1.0.0",
+  "description": "Lightweight Wake on LAN server for Raspberry Pi",
+  "main": "wol-server.js",
+  "scripts": {
+    "start": "node wol-server.js",
+    "dev": "nodemon wol-server.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "wake_on_lan": "^1.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
