@@ -6,6 +6,8 @@ const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
 
 // Load environment variables
 dotenv.config();
@@ -79,6 +81,69 @@ app.get('/api/status', (req, res) => {
     message: 'WOL Server is running',
     version: '1.0.0'
   });
+});
+
+// Network scanning endpoint
+app.get('/api/network/scan', auth, async (req, res) => {
+  try {
+    let discoveredDevices = [];
+    
+    // Only proceed for Linux or Mac
+    const platform = os.platform();
+    if (platform !== 'linux' && platform !== 'darwin') {
+      return res.status(400).send({ error: 'Unsupported operating system' });
+    }
+    
+    try {
+      // Prefer arp-scan if available
+      try {
+        const arpScan = execSync('arp-scan -l').toString();
+        const lines = arpScan.split('\n');
+        
+        for (const line of lines) {
+          // Parse arp-scan output
+          const match = line.match(/(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f:]+)/i);
+          if (match) {
+            discoveredDevices.push({
+              ipAddress: match[1],
+              macAddress: match[2],
+              isOnline: true,
+              name: `Device (${match[1]})` // Optional: provide a default name
+            });
+          }
+        }
+      } catch (arpScanErr) {
+        // Fallback to arp command
+        const arpTable = execSync('arp -a').toString();
+        const lines = arpTable.split('\n');
+        
+        for (const line of lines) {
+          // Parse arp -a output
+          const match = line.match(/(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f-]+)/i);
+          if (match) {
+            const mac = match[2].replace(/-/g, ':');
+            discoveredDevices.push({
+              ipAddress: match[1],
+              macAddress: mac,
+              isOnline: true,
+              name: `Device (${match[1]})` // Optional: provide a default name
+            });
+          }
+        }
+      }
+      
+      res.send(discoveredDevices);
+    } catch (err) {
+      console.error('Network scan error:', err);
+      res.status(500).send({ 
+        error: 'Failed to perform network scan',
+        details: err.message 
+      });
+    }
+  } catch (error) {
+    console.error('Complete network scan error:', error);
+    res.status(500).send({ error: error.message });
+  }
 });
 
 // Devices endpoint - List all devices
@@ -278,7 +343,7 @@ app.post('/api/devices/:id/wake', auth, async (req, res) => {
   }
 });
 
-// Start
+// Start server
 app.listen(PORT, () => {
   console.log(`WOL Server running on port ${PORT}`);
 });
