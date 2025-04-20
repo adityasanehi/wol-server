@@ -6,7 +6,6 @@ const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
-const os = require('os');
 const { execSync } = require('child_process');
 
 // Load environment variables
@@ -87,12 +86,6 @@ app.get('/api/status', (req, res) => {
 app.get('/api/network/scan', auth, async (req, res) => {
   try {
     let discoveredDevices = [];
-    
-    // Only proceed for Linux or Mac
-    const platform = os.platform();
-    if (platform !== 'linux' && platform !== 'darwin') {
-      return res.status(400).send({ error: 'Unsupported operating system' });
-    }
     
     try {
       // Prefer arp-scan if available
