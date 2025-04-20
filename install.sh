@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # WOL Server Installer for Raspberry Pi
 echo "WOL Server Installer for Raspberry Pi"
 
@@ -15,6 +14,17 @@ fi
 # Check Node.js version
 NODE_VERSION=$(node -v)
 echo "Node.js version: $NODE_VERSION"
+
+# Install arp-scan
+echo "Installing arp-scan..."
+sudo apt-get update
+sudo apt-get install -y arp-scan
+
+# Verify arp-scan installation
+if ! command -v arp-scan &> /dev/null; then
+  echo "Failed to install arp-scan. Please check your system configuration."
+  exit 1
+fi
 
 # Create installation directory
 INSTALL_DIR="/opt/wol-server"
@@ -39,7 +49,6 @@ npm install --production
 # Create systemd service
 echo "Creating systemd service..."
 SERVICE_FILE="/etc/systemd/system/wol-server.service"
-
 sudo bash -c "cat > $SERVICE_FILE" << EOL
 [Unit]
 Description=Wake on LAN Server
