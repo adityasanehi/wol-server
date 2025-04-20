@@ -1,10 +1,11 @@
-// File: wol-server.js
 // Lightweight standalone Wake on LAN server for Raspberry Pi or other lightweight Linux devices
 const express = require('express');
 const cors = require('cors');
 const wol = require('wake_on_lan');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
+const fs = require('fs').promises;
+const path = require('path');
 
 // Load environment variables
 dotenv.config();
@@ -13,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_change_this_in_production';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['*'];
+const DEVICES_FILE = path.join(__dirname, 'devices.json');
 
 // Basic configuration
 app.use(express.json());
@@ -39,7 +41,6 @@ const auth = async (req, res, next) => {
     if (!token) {
       return res.status(401).send({ error: 'Authentication required' });
     }
-
     const decoded = jwt.verify(token, JWT_SECRET);
     
     // We're not querying a database here, just checking if the token is valid
@@ -52,6 +53,25 @@ const auth = async (req, res, next) => {
   }
 };
 
+// Utility function to read devices from file
+const readDevices = async () => {
+  try {
+    const data = await fs.readFile(DEVICES_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    // If file doesn't exist, return empty array
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+};
+
+// Utility function to write devices to file
+const writeDevices = async (devices) => {
+  await fs.writeFile(DEVICES_FILE, JSON.stringify(devices, null, 2), 'utf8');
+};
+
 // Status endpoint
 app.get('/api/status', (req, res) => {
   res.send({
@@ -59,6 +79,135 @@ app.get('/api/status', (req, res) => {
     message: 'WOL Server is running',
     version: '1.0.0'
   });
+});
+
+// Devices endpoint - List all devices
+app.get('/api/devices', auth, async (req, res) => {
+  try {
+    const devices = await readDevices();
+    res.send(devices);
+  } catch (error) {
+    console.error('Error reading devices:', error);
+    res.status(500).send({ error: 'Failed to retrieve devices' });
+  }
+});
+
+// Add a new device
+app.post('/api/devices', auth, async (req, res) => {
+  try {
+    const { name, macAddress, ipAddress, tags = [] } = req.body;
+    
+    // Validate required fields
+    if (!macAddress) {
+      return res.status(400).send({ error: 'MAC address is required' });
+    }
+    
+    // Validate MAC address format
+    const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+    if (!macRegex.test(macAddress)) {
+      return res.status(400).send({ error: 'Invalid MAC address format' });
+    }
+    
+    // Read existing devices
+    const devices = await readDevices();
+    
+    // Check if device already exists
+    const existingDeviceIndex = devices.findIndex(
+      d => d.macAddress.toLowerCase() === macAddress.toLowerCase()
+    );
+    
+    if (existingDeviceIndex !== -1) {
+      // Update existing device
+      devices[existingDeviceIndex] = {
+        ...devices[existingDeviceIndex],
+        name: name || devices[existingDeviceIndex].name,
+        ipAddress: ipAddress || devices[existingDeviceIndex].ipAddress,
+        tags: [...new Set([...devices[existingDeviceIndex].tags, ...tags])]
+      };
+    } else {
+      // Add new device
+      devices.push({
+        id: Date.now().toString(), // Simple unique ID
+        name: name || `Device (${macAddress})`,
+        macAddress,
+        ipAddress,
+        tags,
+        isOnline: false,
+        createdAt: new Date().toISOString()
+      });
+    }
+    
+    // Write updated devices
+    await writeDevices(devices);
+    
+    // Return the added/updated device
+    const savedDevice = devices.find(
+      d => d.macAddress.toLowerCase() === macAddress.toLowerCase()
+    );
+    
+    res.status(201).send(savedDevice);
+  } catch (error) {
+    console.error('Error adding device:', error);
+    res.status(500).send({ error: 'Failed to add device' });
+  }
+});
+
+// Update a device
+app.patch('/api/devices/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateFields = req.body;
+    
+    // Read existing devices
+    const devices = await readDevices();
+    
+    // Find the device
+    const deviceIndex = devices.findIndex(d => d.id === id);
+    
+    if (deviceIndex === -1) {
+      return res.status(404).send({ error: 'Device not found' });
+    }
+    
+    // Update device
+    devices[deviceIndex] = {
+      ...devices[deviceIndex],
+      ...updateFields
+    };
+    
+    // Write updated devices
+    await writeDevices(devices);
+    
+    res.send(devices[deviceIndex]);
+  } catch (error) {
+    console.error('Error updating device:', error);
+    res.status(500).send({ error: 'Failed to update device' });
+  }
+});
+
+// Delete a device
+app.delete('/api/devices/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Read existing devices
+    let devices = await readDevices();
+    
+    // Filter out the device
+    const initialLength = devices.length;
+    devices = devices.filter(d => d.id !== id);
+    
+    if (devices.length === initialLength) {
+      return res.status(404).send({ error: 'Device not found' });
+    }
+    
+    // Write updated devices
+    await writeDevices(devices);
+    
+    res.send({ message: 'Device deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting device:', error);
+    res.status(500).send({ error: 'Failed to delete device' });
+  }
 });
 
 // Wake on LAN endpoint
@@ -100,16 +249,17 @@ app.post('/api/wake', auth, async (req, res) => {
 // Wake with device ID endpoint for compatibility with main app
 app.post('/api/devices/:id/wake', auth, async (req, res) => {
   try {
-    // Since we don't have a database, we expect the device details in the request body
-    const { macAddress, broadcastAddress = '255.255.255.255', port = 9 } = req.body;
+    // Read devices to find the device by ID
+    const devices = await readDevices();
+    const device = devices.find(d => d.id === req.params.id);
     
-    if (!macAddress) {
-      return res.status(400).send({ error: 'MAC address is required' });
+    if (!device) {
+      return res.status(404).send({ error: 'Device not found' });
     }
     
-    wol.wake(macAddress, {
-      address: broadcastAddress,
-      port
+    wol.wake(device.macAddress, {
+      address: device.broadcastAddress || '255.255.255.255',
+      port: device.port || 9
     }, (error) => {
       if (error) {
         return res.status(500).send({ error: 'Failed to send WOL packet' });
@@ -117,9 +267,9 @@ app.post('/api/devices/:id/wake', auth, async (req, res) => {
       
       res.send({ 
         message: 'Wake packet sent successfully',
-        macAddress,
-        broadcastAddress,
-        port 
+        macAddress: device.macAddress,
+        broadcastAddress: device.broadcastAddress || '255.255.255.255',
+        port: device.port || 9
       });
     });
   } catch (error) {
@@ -128,7 +278,7 @@ app.post('/api/devices/:id/wake', auth, async (req, res) => {
   }
 });
 
-// Start server
+// Start
 app.listen(PORT, () => {
   console.log(`WOL Server running on port ${PORT}`);
 });
