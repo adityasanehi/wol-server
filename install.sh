@@ -5,7 +5,7 @@ echo "WOL Server Installer for Raspberry Pi"
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
   echo "Node.js not found. Installing..."
-  curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt-get install -y nodejs
 else
   echo "Node.js is already installed."
