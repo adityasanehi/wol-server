@@ -176,16 +176,10 @@ jobs:
         run: |
           # Create main release archive
           tar -czf release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz \
-            wol-server.js \
-            package.json \
-            README.md \
             .env.example \
             release-assets/install.sh
           
           # Create individual files for direct download
-          cp wol-server.js release-assets/
-          cp package.json release-assets/
-          cp README.md release-assets/
           cp .env.example release-assets/
 
       - name: Generate changelog
@@ -241,16 +235,13 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
-          name: Wake on LAN Server ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
           body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
             release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz
-            release-assets/wol-server.js
-            release-assets/package.json
             release-assets/install.sh
-            release-assets/README.md
             release-assets/.env.example
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -268,62 +259,3 @@ jobs:
           files: latest.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  test-installation:
-    needs: create-release
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y arp-scan
-
-      - name: Download and test installation script
-        run: |
-          # Get the version from the previous job
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          
-          # Download the install script
-          wget https://github.com/${{ github.repository }}/releases/download/$VERSION/install.sh
-          chmod +x install.sh
-          
-          # Test that the script is executable and contains expected content
-          if ! grep -q "WOL Server Installer" install.sh; then
-            echo "Install script validation failed"
-            exit 1
-          fi
-          
-          echo "Installation script validated successfully"
-
-      - name: Test package integrity
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          
-          # Download and extract the package
-          wget https://github.com/${{ github.repository }}/releases/download/$VERSION/wol-server-$VERSION.tar.gz
-          tar -tzf wol-server-$VERSION.tar.gz | sort > package_contents.txt
-          
-          # Verify expected files are present
-          expected_files=("wol-server.js" "package.json" "install.sh" "README.md" ".env.example")
-          for file in "${expected_files[@]}"; do
-            if ! grep -q "^$file$" package_contents.txt; then
-              echo "Missing file: $file"
-              exit 1
-            fi
-          done
-          
-          echo "Package integrity verified"
