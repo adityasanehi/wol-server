@@ -1,0 +1,314 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag_name=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update package.json version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          npm version $VERSION_NO_V --no-git-tag-version
+
+      - name: Install dependencies
+        run: npm ci --production
+
+      - name: Generate install script
+        run: |
+          mkdir -p release-assets
+          
+          # Generate install.sh from template
+          cat > release-assets/install.sh << 'EOF'
+          #!/bin/bash
+          # WOL Server Installer for Raspberry Pi
+          echo "WOL Server Installer for Raspberry Pi"
+          
+          VERSION="${{ steps.version.outputs.version }}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/$VERSION"
+          
+          # Check if Node.js is installed
+          if ! command -v node &> /dev/null; then
+            echo "Node.js not found. Installing..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          else
+            echo "Node.js is already installed."
+          fi
+          
+          # Check Node.js version
+          NODE_VERSION=$(node -v)
+          echo "Node.js version: $NODE_VERSION"
+          
+          # Install arp-scan
+          echo "Installing arp-scan..."
+          sudo apt-get update
+          sudo apt-get install -y arp-scan
+          
+          # Verify arp-scan installation
+          if ! command -v arp-scan &> /dev/null; then
+            echo "Failed to install arp-scan. Please check your system configuration."
+            exit 1
+          fi
+          
+          # Create installation directory
+          INSTALL_DIR="/opt/wol-server"
+          echo "Creating installation directory: $INSTALL_DIR"
+          sudo mkdir -p $INSTALL_DIR
+          
+          # Download files
+          echo "Downloading WOL server files..."
+          cd $INSTALL_DIR
+          sudo wget -q "$RELEASE_URL/wol-server.js" -O wol-server.js
+          sudo wget -q "$RELEASE_URL/package.json" -O package.json
+          sudo wget -q "$RELEASE_URL/.env.example" -O .env
+          
+          if [ ! -f "wol-server.js" ] || [ ! -f "package.json" ]; then
+            echo "Failed to download required files. Please check your internet connection."
+            exit 1
+          fi
+          
+          # Set correct permissions
+          echo "Setting permissions..."
+          sudo chown -R $USER:$USER $INSTALL_DIR
+          
+          # Install dependencies
+          echo "Installing dependencies..."
+          npm install --production
+          
+          # Create systemd service
+          echo "Creating systemd service..."
+          SERVICE_FILE="/etc/systemd/system/wol-server.service"
+          sudo bash -c "cat > $SERVICE_FILE" << EOL
+          [Unit]
+          Description=Wake on LAN Server
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=$USER
+          WorkingDirectory=$INSTALL_DIR
+          ExecStart=/usr/bin/node $INSTALL_DIR/wol-server.js
+          Restart=always
+          Environment=NODE_ENV=production
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOL
+          
+          # Configure service
+          echo "Configuring service..."
+          sudo systemctl daemon-reload
+          sudo systemctl enable wol-server
+          sudo systemctl start wol-server
+          
+          # Get server IP address
+          IP_ADDRESS=$(hostname -I | awk '{print $1}')
+          PORT=$(grep PORT $INSTALL_DIR/.env | cut -d '=' -f2 || echo "8080")
+          
+          echo ""
+          echo "======================================"
+          echo "Installation Complete!"
+          echo "Your WOL server is running at: http://$IP_ADDRESS:$PORT"
+          echo "Check status: sudo systemctl status wol-server"
+          echo "View logs: sudo journalctl -u wol-server -f"
+          echo ""
+          echo "Don't forget to edit the .env file to set your JWT_SECRET and ALLOWED_ORIGINS:"
+          echo "sudo nano $INSTALL_DIR/.env"
+          echo "======================================"
+          EOF
+          
+          # Make install script executable
+          chmod +x release-assets/install.sh
+
+      - name: Create release package
+        run: |
+          # Create main release archive
+          tar -czf release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz \
+            wol-server.js \
+            package.json \
+            README.md \
+            .env.example \
+            release-assets/install.sh
+          
+          # Create individual files for direct download
+          cp wol-server.js release-assets/
+          cp package.json release-assets/
+          cp README.md release-assets/
+          cp .env.example release-assets/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          
+          # Create changelog
+          cat > CHANGELOG.md << EOF
+          ## What's Changed
+          
+          $COMMITS
+          
+          ## Installation
+          
+          ### Quick Install (Recommended)
+          \`\`\`bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/install.sh
+          chmod +x install.sh
+          ./install.sh
+          \`\`\`
+          
+          ### Manual Download
+          Download the complete package: [wol-server-${{ steps.version.outputs.version }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/wol-server-${{ steps.version.outputs.version }}.tar.gz)
+          
+          ## Requirements
+          - Raspberry Pi Zero 2W/3/4/5 or other Linux device
+          - Node.js 12.x or higher
+          - Network access for installation
+          
+          ## Configuration
+          After installation, edit the configuration file:
+          \`\`\`bash
+          sudo nano /opt/wol-server/.env
+          \`\`\`
+          
+          Set your JWT_SECRET and ALLOWED_ORIGINS in the .env file.
+          
+          ## API Usage
+          - Status: \`GET /api/status\`
+          - Wake Device: \`POST /api/wake\` (requires JWT auth)
+          - Device Management: \`GET/POST/PATCH/DELETE /api/devices\`
+          - Network Scan: \`GET /api/network/scan\`
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Wake on LAN Server ${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz
+            release-assets/wol-server.js
+            release-assets/package.json
+            release-assets/install.sh
+            release-assets/README.md
+            release-assets/.env.example
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update latest release info
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        run: |
+          echo "Latest stable release: ${{ steps.version.outputs.version }}" > latest.txt
+          
+      - name: Upload latest info
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          files: latest.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-installation:
+    needs: create-release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y arp-scan
+
+      - name: Download and test installation script
+        run: |
+          # Get the version from the previous job
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          # Download the install script
+          wget https://github.com/${{ github.repository }}/releases/download/$VERSION/install.sh
+          chmod +x install.sh
+          
+          # Test that the script is executable and contains expected content
+          if ! grep -q "WOL Server Installer" install.sh; then
+            echo "Install script validation failed"
+            exit 1
+          fi
+          
+          echo "Installation script validated successfully"
+
+      - name: Test package integrity
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          # Download and extract the package
+          wget https://github.com/${{ github.repository }}/releases/download/$VERSION/wol-server-$VERSION.tar.gz
+          tar -tzf wol-server-$VERSION.tar.gz | sort > package_contents.txt
+          
+          # Verify expected files are present
+          expected_files=("wol-server.js" "package.json" "install.sh" "README.md" ".env.example")
+          for file in "${expected_files[@]}"; do
+            if ! grep -q "^$file$" package_contents.txt; then
+              echo "Missing file: $file"
+              exit 1
+            fi
+          done
+          
+          echo "Package integrity verified"
