@@ -172,26 +172,38 @@ jobs:
           # Make install script executable
           chmod +x release-assets/install.sh
 
-      - name: Create release package
+      - name: Create release files
         run: |
-          # Create main release archive
-          tar -czf release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz \
-            .env.example \
-            release-assets/install.sh
-          
-          # Create individual files for direct download
+          # Copy individual files for direct download
           cp .env.example release-assets/
 
       - name: Generate changelog
         id: changelog
         run: |
-          # Get commits since last tag
+          # Get commits since last tag, excluding .github directory changes
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -z "$LAST_TAG" ]; then
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+            # Get all commits, but filter out those that only touch .github directory
+            ALL_COMMITS=$(git log --pretty=format:"%H|%s" --no-merges)
           else
-            COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            # Get commits since last tag, but filter out those that only touch .github directory
+            ALL_COMMITS=$(git log $LAST_TAG..HEAD --pretty=format:"%H|%s" --no-merges)
           fi
+          
+          # Filter out commits that only modify .github directory
+          FILTERED_COMMITS=""
+          while IFS='|' read -r hash subject; do
+            if [ -n "$hash" ]; then
+              # Check if commit only touches .github directory
+              CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r $hash)
+              NON_GITHUB_FILES=$(echo "$CHANGED_FILES" | grep -v "^\.github/" || true)
+              
+              # If there are files outside .github directory, include this commit
+              if [ -n "$NON_GITHUB_FILES" ]; then
+                if [ -z "$FILTERED_COMMITS" ]; then
+                  FILTERED_COMMITS="- $subject (${hash:0:7})"
+                else
+                  FILTERED_COMMITS="$FILTERED_COMMITS"
           
           # Create changelog
           cat > CHANGELOG.md << EOF
@@ -207,9 +219,6 @@ jobs:
           chmod +x install.sh
           ./install.sh
           \`\`\`
-          
-          ### Manual Download
-          Download the complete package: [wol-server-${{ steps.version.outputs.version }}.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/wol-server-${{ steps.version.outputs.version }}.tar.gz)
           
           ## Requirements
           - Raspberry Pi Zero 2W/3/4/5 or other Linux device
@@ -240,7 +249,70 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: |
-            release-assets/wol-server-${{ steps.version.outputs.version }}.tar.gz
+            release-assets/install.sh
+            release-assets/.env.example
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          
+      - name: Upload latest info
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n'"- $subject (${hash:0:7})"
+                fi
+              fi
+            fi
+          done <<< "$ALL_COMMITS"
+          
+          COMMITS="$FILTERED_COMMITS"
+          
+          # Create changelog
+          cat > CHANGELOG.md << EOF
+          ## What's Changed
+          
+          $COMMITS
+          
+          ## Installation
+          
+          ### Quick Install (Recommended)
+          \`\`\`bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/install.sh
+          chmod +x install.sh
+          ./install.sh
+          \`\`\`
+          
+          ## Requirements
+          - Raspberry Pi Zero 2W/3/4/5 or other Linux device
+          - Node.js 12.x or higher
+          - Network access for installation
+          
+          ## Configuration
+          After installation, edit the configuration file:
+          \`\`\`bash
+          sudo nano /opt/wol-server/.env
+          \`\`\`
+          
+          Set your JWT_SECRET and ALLOWED_ORIGINS in the .env file.
+          
+          ## API Usage
+          - Status: \`GET /api/status\`
+          - Wake Device: \`POST /api/wake\` (requires JWT auth)
+          - Device Management: \`GET/POST/PATCH/DELETE /api/devices\`
+          - Network Scan: \`GET /api/network/scan\`
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: ${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
             release-assets/install.sh
             release-assets/.env.example
         env:
