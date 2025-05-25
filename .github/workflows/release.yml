@@ -246,16 +246,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update latest release info
-        if: ${{ !contains(steps.version.outputs.version, '-') }}
-        run: |
-          echo "Latest stable release: ${{ steps.version.outputs.version }}" > latest.txt
           
       - name: Upload latest info
         if: ${{ !contains(steps.version.outputs.version, '-') }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
-          files: latest.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
