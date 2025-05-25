@@ -203,65 +203,7 @@ jobs:
                 if [ -z "$FILTERED_COMMITS" ]; then
                   FILTERED_COMMITS="- $subject (${hash:0:7})"
                 else
-                  FILTERED_COMMITS="$FILTERED_COMMITS"
-          
-          # Create changelog
-          cat > CHANGELOG.md << EOF
-          ## What's Changed
-          
-          $COMMITS
-          
-          ## Installation
-          
-          ### Quick Install (Recommended)
-          \`\`\`bash
-          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag_name }}/install.sh
-          chmod +x install.sh
-          ./install.sh
-          \`\`\`
-          
-          ## Requirements
-          - Raspberry Pi Zero 2W/3/4/5 or other Linux device
-          - Node.js 12.x or higher
-          - Network access for installation
-          
-          ## Configuration
-          After installation, edit the configuration file:
-          \`\`\`bash
-          sudo nano /opt/wol-server/.env
-          \`\`\`
-          
-          Set your JWT_SECRET and ALLOWED_ORIGINS in the .env file.
-          
-          ## API Usage
-          - Status: \`GET /api/status\`
-          - Wake Device: \`POST /api/wake\` (requires JWT auth)
-          - Device Management: \`GET/POST/PATCH/DELETE /api/devices\`
-          - Network Scan: \`GET /api/network/scan\`
-          EOF
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag_name }}
-          name: ${{ steps.version.outputs.version }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          files: |
-            release-assets/install.sh
-            release-assets/.env.example
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          
-      - name: Upload latest info
-        if: ${{ !contains(steps.version.outputs.version, '-') }}
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n'"- $subject (${hash:0:7})"
+                  FILTERED_COMMITS="$FILTERED_COMMITS"$'\n'"- $subject (${hash:0:7})"
                 fi
               fi
             fi
